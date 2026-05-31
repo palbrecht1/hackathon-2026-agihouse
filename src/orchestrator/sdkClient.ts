@@ -2,6 +2,7 @@ import { createOpencode } from "@opencode-ai/sdk"
 import type { Config } from "@opencode-ai/sdk"
 import type { PromptClient } from "./run"
 import { buildAgentConfig } from "../opencode/agents"
+import { configureWandbOtel } from "./telemetry"
 import type { Rule } from "../config/schema"
 
 export interface SdkHandle {
@@ -103,6 +104,9 @@ function resolveEnvPlaceholders(value: unknown): unknown {
  * internal agent builder.
  */
 export async function createSdkClient(model: string, rules: Rule[]): Promise<SdkHandle> {
+  // Derive W&B Weave OTEL env from WANDB_API_KEY/WANDB_PROJECT_ID (no-op otherwise).
+  configureWandbOtel()
+
   const config: Record<string, unknown> = { ...buildAgentConfig(model, rules) }
   const providerJson = process.env.OPENCODE_PROVIDER_JSON
   if (providerJson) {
