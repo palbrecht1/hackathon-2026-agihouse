@@ -65,9 +65,13 @@ pip install -e .
 ### 2. Set Environment Variables
 
 ```bash
-export ANTHROPIC_API_KEY="your-anthropic-key"
 export WANDB_API_KEY="your-wandb-key"
-export WEAVE_PROJECT="your-team/code-review-swarm"
+export WEAVE_PROJECT="code-review-swarm"
+
+# Choose your backend:
+export REVIEW_SWARM_BACKEND=wandb_inference  # W&B Serverless Inference (recommended — uses W&B credits)
+# export REVIEW_SWARM_BACKEND=anthropic      # Claude (needs ANTHROPIC_API_KEY)
+# export REVIEW_SWARM_BACKEND=simulate       # Mock mode for offline demos
 ```
 
 Or copy `.env.example` to `.env` and fill in values.
@@ -153,11 +157,59 @@ Every operation is decorated with `@weave.op()`, so you get:
 
 | Trace | What It Shows |
 |-------|---------------|
-| `review_diff` | Top-level orchestration — the full pipeline |
-| `run_specialist_agent` (×4) | Each specialist's input/output, tokens, latency |
-| `run_debate_round` | Challenges raised, verdicts, false positives caught |
-| `run_lead_consolidation` | Final deduplication and ranking logic |
-| `run_evaluation` | Eval metrics: recall, precision, severity accuracy |
+| `🐝 Code Review Swarm Pipeline` | Top-level orchestration — the full pipeline |
+| `🔍 Specialist: {category}` (×4) | Each specialist's input/output, tokens, latency |
+| `🗣️ Adversarial Debate` | Challenges raised, verdicts, false positives caught |
+| `⚔️ Challenge: {X} vs {Y}` (×N) | Individual debate challenges as separate traced nodes |
+| `📊 Lead Consolidation` | Final deduplication and ranking logic |
+| `📈 Review Metrics` | Structured metrics: severity breakdown, token usage |
+| `🎯 Quality Scorer` | Inline quality scores for Weave Monitors |
+
+## W&B / Weave Integration (Sponsor Usage)
+
+This project deeply integrates with the W&B platform across 7 features:
+
+### 1. Weave Tracing (`@weave.op()`)
+Every function in the pipeline is traced with descriptive `call_display_name` labels. The trace tree shows the full multi-agent orchestration graph with timing, inputs, and outputs.
+
+### 2. Weave Prompt Management
+All 6 agent prompts are published to Weave as versioned `StringPrompt` objects:
+- `security_specialist`, `performance_specialist`, `logic_specialist`, `style_specialist`
+- `lead_consolidator`, `debate_moderator`
+
+**Edit prompts in the Weave UI** → changes take effect on next run without code changes.
+
+```bash
+review-swarm publish-prompts  # Explicitly publish/update prompts
+```
+
+### 3. Weave Model Versioning
+`CodeReviewSwarmModel` is a `weave.Model` subclass with versioned parameters (model name, specialists list, debate toggle). Published to Weave for comparison across experiments.
+
+### 4. Weave Evaluations
+- Published `Dataset` (`known-bugs-eval-set`) with 8 labeled buggy diffs
+- `EvaluationLogger` with 6 scored metrics per sample
+- Results appear in the **Evals tab** with comparison tables
+
+```bash
+review-swarm evaluate  # Run eval suite → see results in Weave Evals tab
+```
+
+### 5. Quality Scorer (for Weave Monitors)
+Every review call runs an inline `🎯 Quality Scorer` that emits:
+- `has_critical_findings`, `average_confidence`, `debate_was_meaningful`
+- `false_positives_caught`, `quality_score`
+
+Set up a **Monitor** in the Weave UI → select the `review_diff` op → auto-score production traffic.
+
+### 6. W&B Serverless Inference
+Uses `meta-llama/Llama-3.3-70B-Instruct` via W&B's OpenAI-compatible inference API:
+- **No Anthropic key needed** — uses W&B credits ($100 included)
+- Full prompt/completion traces logged automatically by Weave
+- Shows real LLM latency, tokens, and model responses in the trace
+
+### 7. Review Metrics Dashboard
+Structured metrics logged per call: risk score, severity breakdown, false positive rate, token usage. Enables dashboards and trend analysis in Weave.
 
 ## Evaluation Metrics
 
@@ -173,25 +225,31 @@ The eval suite tests against 8 known-buggy code samples:
 ## Demo Script (for the hackathon presentation)
 
 1. **Show the architecture** — explain the 3-phase pipeline (30 sec)
-2. **Run `review-swarm demo`** — reviews real Daytona.io code, watch the orchestration tree with findings (60 sec)
-3. **Open Weave** — show the trace graph with all 6 agents visible as nested operations (30 sec)
-4. **Run `review-swarm github daytonaio/daytona#4858`** — live review of a real merged PR (30 sec)
-5. **Run `review-swarm evaluate`** — show precision/recall metrics against labeled dataset (30 sec)
+2. **Run `review-swarm demo`** — reviews real Daytona.io code with W&B Inference, watch the orchestration tree with findings (60 sec)
+3. **Open Weave** — show the trace graph with all agents visible as named nested operations (30 sec)
+4. **Show Prompts in Weave** — demonstrate editing a prompt in the UI (15 sec)
+5. **Run `review-swarm evaluate`** — show precision/recall metrics in the Evals tab (30 sec)
+6. **Show Quality Scorer** — point to the inline scoring op and how Monitors would pick it up (15 sec)
 
 **Key talking points:**
 - "4 specialist agents run in parallel — security, performance, logic, style"
 - "Then they DEBATE each other — challenge false positives adversarially"
 - "The lead agent consolidates after debate, only upheld findings survive"
 - "Every step is traced in Weave — you can see the full orchestration graph"
-- "We measured precision/recall against 8 known-buggy samples"
+- "Prompts are versioned in Weave — edit them in the UI, no code deploy needed"
+- "We use W&B Serverless Inference — real LLM calls with Llama 3.3 70B"
+- "Evaluation suite with published Dataset and 6 quality metrics"
+- "Quality scorer runs inline for continuous monitoring via Weave Monitors"
 
 ## Tech Stack
 
-- **Anthropic Claude** (claude-sonnet-4-20250514) — powers all agents
-- **W&B Weave** — tracing, evaluation, agent observability
+- **W&B Weave** — tracing, evaluations, prompt management, model versioning, monitors
+- **W&B Serverless Inference** — hosted LLM calls (Llama 3.3 70B), uses W&B credits
+- **Anthropic Claude** (claude-sonnet-4-20250514) — optional alternative backend
 - **Python asyncio** — parallel agent execution
 - **Rich** — beautiful terminal UI for the demo
 - **Pydantic** — structured data models for findings
+- **OpenAI SDK** — W&B Inference client (OpenAI-compatible API)
 
 ## Project Structure
 
@@ -201,9 +259,11 @@ review_swarm/
 ├── models.py           # Pydantic data models (Finding, Review, etc.)
 ├── prompts.py          # System prompts for each specialist agent
 ├── agents.py           # Core orchestration engine (parallel → debate → lead)
+├── weave_prompts.py    # Weave prompt publishing and loading
+├── mock_responses.py   # Mock responses for simulate mode
 ├── demos.py            # Curated real-world diffs from Daytona.io
 ├── github.py           # GitHub PR diff fetcher (any public repo)
-├── evaluation.py       # Eval harness with labeled dataset + Weave scoring
+├── evaluation.py       # Eval harness with Weave EvaluationLogger + Dataset
 ├── ui.py               # Rich terminal rendering
 └── cli.py              # Click CLI entry point
 ```
@@ -212,8 +272,8 @@ review_swarm/
 
 | Criterion | How We Address It |
 |-----------|-------------------|
-| **Agent Orchestration** | 4 parallel specialists → adversarial debate → lead consolidation. Clear multi-agent handoffs. |
-| **Utility** | Solves real code review — finds security vulns, perf issues, logic bugs, style problems. |
-| **Technical Execution** | Async parallel execution, structured outputs, proper error handling, eval metrics. |
-| **Creativity** | Adversarial debate between agents is novel — they challenge each other's false positives. |
-| **Sponsor Usage** | Deep Weave integration: every agent traced, eval metrics logged, orchestration graph visible. |
+| **Agent Orchestration** | 4 parallel specialists → adversarial debate → lead consolidation. Clear multi-agent handoffs with named trace nodes. |
+| **Utility** | Solves real code review — finds security vulns, perf issues, logic bugs, style problems on real OSS code. |
+| **Technical Execution** | Async parallel execution, multi-backend (W&B Inference + Anthropic + simulate), structured eval with 6 metrics. |
+| **Creativity** | Adversarial debate between agents is novel — they challenge each other's false positives, reducing noise. |
+| **Sponsor Usage** | 7 W&B features: Weave Tracing, Prompt Management, Model Versioning, Evaluations, Quality Scorer, W&B Inference, Metrics Dashboard. |
