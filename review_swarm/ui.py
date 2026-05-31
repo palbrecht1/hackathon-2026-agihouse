@@ -135,6 +135,12 @@ async def run_review_with_ui(diff: str, weave_project: str | None = None) -> dic
     # Initialize Weave
     if weave_project:
         weave.init(weave_project)
+        # Publish prompts to Weave for version tracking & UI editing
+        from .weave_prompts import publish_prompts
+        try:
+            publish_prompts(weave_project)
+        except Exception:
+            pass  # Non-fatal if publish fails
 
     console.print(
         Panel(

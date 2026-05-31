@@ -216,6 +216,31 @@ def github(pr_url: str, project: str | None):
     asyncio.run(run_review_with_ui(diff, weave_project=weave_project))
 
 
+@cli.command("publish-prompts")
+@click.option("--project", "-p", type=str, default=None, help="W&B Weave project (team/project)")
+def publish_prompts_cmd(project: str | None):
+    """Publish all agent prompts to Weave for version tracking.
+
+    Once published, prompts are editable in the W&B Weave UI.
+    Changes take effect on the next review run without code changes.
+    """
+    from .weave_prompts import publish_prompts
+
+    weave_project = project or os.environ.get("WEAVE_PROJECT")
+    if not weave_project:
+        console.print("[red]Error: Set WEAVE_PROJECT env var or use --project[/red]")
+        sys.exit(1)
+
+    console.print(f"[bold]Publishing prompts to Weave project: {weave_project}[/bold]\n")
+    refs = publish_prompts(weave_project)
+
+    for name, uri in refs.items():
+        console.print(f"  [green]✓[/green] {name} → [dim]{uri}[/dim]")
+
+    console.print(f"\n[bold green]✓ Published {len(refs)} prompts![/bold green]")
+    console.print(f"[dim]Edit them in the Weave UI: https://wandb.ai/{weave_project}/weave/prompts[/dim]")
+
+
 def main():
     cli()
 

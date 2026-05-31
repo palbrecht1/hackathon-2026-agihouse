@@ -27,6 +27,7 @@ from .prompts import (
     SECURITY_SYSTEM_PROMPT,
     STYLE_SYSTEM_PROMPT,
 )
+from .weave_prompts import get_specialist_prompt, get_lead_prompt, get_debate_prompt
 
 AGENT_PROMPTS = {
     ReviewCategory.SECURITY: SECURITY_SYSTEM_PROMPT,
@@ -71,7 +72,7 @@ async def run_specialist_agent(
 ) -> dict[str, Any]:
     """Run a single specialist review agent."""
     cat = ReviewCategory(category)
-    system_prompt = AGENT_PROMPTS[cat]
+    system_prompt = get_specialist_prompt(category)
 
     if SIMULATE:
         from .mock_responses import MOCK_FINDINGS, _simulate_latency, _simulate_tokens
@@ -286,7 +287,7 @@ If no challenges, respond: {{"challenges": []}}"""
     response = await client.messages.create(
         model=MODEL,
         max_tokens=2048,
-        system=DEBATE_SYSTEM_PROMPT,
+        system=get_debate_prompt(),
         messages=[
             {
                 "role": "user",
@@ -390,7 +391,7 @@ Consolidate these into a final prioritized review."""
     response = await client.messages.create(
         model=MODEL,
         max_tokens=4096,
-        system=LEAD_SYSTEM_PROMPT,
+        system=get_lead_prompt(),
         messages=[{"role": "user", "content": context}],
     )
     latency_ms = (time.perf_counter() - start) * 1000
