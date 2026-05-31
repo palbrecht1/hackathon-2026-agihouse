@@ -1,0 +1,11 @@
+layer: MVC
+description: |
+  Services hold business logic and must never touch the DB directly —
+  persistence goes through a repository.
+rules:
+  - id: service-no-db
+    glob: "src/services/**/*.ts"
+    severity: error
+    rule: |
+      Services must not import or call the DB/ORM client directly. Flag
+      direct DB access; it must go through a repository.

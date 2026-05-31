@@ -1,0 +1,9 @@
+layer: Error handling
+description: |
+  We are migrating to neverthrow. New code returns Result instead of throwing.
+  Existing try/catch is legacy — do NOT treat it as precedent.
+rules:
+  - id: no-try-catch
+    glob: "src/**/*.ts"
+    severity: warn
+    rule: Flag new try/catch blocks and thrown exceptions in changed code.

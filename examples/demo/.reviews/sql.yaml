@@ -1,0 +1,10 @@
+layer: SQL
+description: Raw SQL must not trigger a sequential scan on a large table.
+tools: [sql_explain]
+rules:
+  - id: query-explain
+    glob: "src/**/*.sql.ts"
+    severity: error
+    rule: |
+      For each newly added or modified SQL string, call the sql_explain tool
+      with that query and flag any plan containing "Seq Scan".
