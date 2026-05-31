@@ -10,7 +10,30 @@ export interface SdkHandle {
 }
 
 /**
+ * Resolve `{env:VAR}` placeholders inside a parsed config value (the same
+ * convention OpenCode uses in its on-disk config). Lets a custom provider's
+ * apiKey/headers reference an env var without baking the secret into the JSON.
+ */
+function resolveEnvPlaceholders(value: unknown): unknown {
+  if (typeof value === "string") {
+    return value.replace(/\{env:([A-Z0-9_]+)\}/g, (_m, name: string) => process.env[name] ?? "")
+  }
+  if (Array.isArray(value)) return value.map(resolveEnvPlaceholders)
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([k, v]) => [k, resolveEnvPlaceholders(v)]),
+    )
+  }
+  return value
+}
+
+/**
  * Boot an embedded OpenCode server and adapt its client to PromptClient.
+ *
+ * Model/provider: the model string comes from the caller (REVIEW_MODEL). To use a
+ * provider other than the built-ins (e.g. an OpenAI-compatible gateway such as
+ * Nebius Token Factory), set `OPENCODE_PROVIDER_JSON` to an OpenCode `provider`
+ * block; it is merged into the config and `{env:VAR}` placeholders are resolved.
  *
  * Cast note: buildAgentConfig returns { agent: Record<string, AgentDef> } where
  * AgentDef.permission is Record<string, Action>. The SDK's Config.agent.*.permission
@@ -20,9 +43,13 @@ export interface SdkHandle {
  * internal agent builder.
  */
 export async function createSdkClient(model: string, rules: Rule[]): Promise<SdkHandle> {
-  const agentConfig = buildAgentConfig(model, rules)
+  const config: Record<string, unknown> = { ...buildAgentConfig(model, rules) }
+  const providerJson = process.env.OPENCODE_PROVIDER_JSON
+  if (providerJson) {
+    config.provider = resolveEnvPlaceholders(JSON.parse(providerJson) as unknown)
+  }
   const { client, server } = await createOpencode({
-    config: agentConfig as unknown as Config,
+    config: config as unknown as Config,
   })
 
   return {
