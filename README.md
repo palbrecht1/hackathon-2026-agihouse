@@ -7,13 +7,14 @@ A reusable, config-driven AI PR review agent built on [OpenCode](https://opencod
 ## Table of contents
 
 1. [What it is](#what-it-is)
-2. [The `.reviews/*.yaml` config contract](#the-reviewsyaml-config-contract)
-3. [Custom reviewer tools](#custom-reviewer-tools)
-4. [Local usage](#local-usage)
-5. [Model and provider config](#model-and-provider-config)
-6. [GitHub Action](#github-action)
-7. [Architecture](#architecture)
-8. [Dev](#dev)
+2. [How it runs (self-hosted model)](#how-it-runs-self-hosted-model)
+3. [The `.reviews/*.yaml` config contract](#the-reviewsyaml-config-contract)
+4. [Custom reviewer tools](#custom-reviewer-tools)
+5. [Local usage](#local-usage)
+6. [Model and provider config](#model-and-provider-config)
+7. [GitHub Action](#github-action)
+8. [Architecture](#architecture)
+9. [Dev](#dev)
 
 ---
 
@@ -28,6 +29,21 @@ Core properties:
 - **Deterministic gate** — the pass/fail outcome is computed from a result store after the session ends. The model never decides whether a PR merges.
 - **Fail-closed** — if a dispatched rule has no recorded result (subagent errored or was silently dropped), the gate fails by default.
 - **Two entrypoints, same core** — runs locally (CLI) or as a GitHub Action. Only the source adapter and reporter tool differ.
+
+---
+
+## How it runs (self-hosted model)
+
+**This framework is self-hosted.** The CLI and GitHub Action must run from the root of the repository being reviewed, because the `@opencode-ai/sdk` spawns the `opencode` CLI as a subprocess and the CLI discovers custom tools from `<cwd>/.opencode/tool/`. The framework's reporter tool lives at `.opencode/tool/report.ts` in this repo and imports from `src/` via relative paths — it is only found when the process runs from the repo root where both `.opencode/tool/report.ts` and `src/` exist.
+
+**Concretely:** add this framework (its `src/`, `.opencode/`, and your `.reviews/` config) to the repository whose PRs you want reviewed, and run the CLI or Action from that repo's root. Running from a subdirectory will not discover the reporter tool and the review will fail silently.
+
+**The `opencode` CLI must be on PATH.** The SDK does not include the CLI — it spawns it from the environment.
+
+- **Locally:** install OpenCode normally (e.g. `npm install -g opencode-ai`).
+- **In CI:** the bundled workflow installs it automatically before running the action (`npm install -g opencode-ai`).
+
+> **Future work:** cross-repo distribution as an installable npm package or reusable GitHub Action (where consumers install the framework as a dependency without copying source) is not yet supported. Today the framework must live in the repo root it reviews.
 
 ---
 
@@ -146,8 +162,10 @@ Referenced from `examples/demo/.reviews/sql.yaml` via `tools: [sql_explain]`. Se
 
 ## Local usage
 
+Run from the **repo root** (where `.opencode/tool/report.ts` and `src/` live — see [How it runs](#how-it-runs-self-hosted-model)):
+
 ```bash
-bun run src/entrypoints/cli.ts [base-ref]
+ANTHROPIC_API_KEY=... bun run src/entrypoints/cli.ts [base-ref]
 ```
 
 `base-ref` defaults to `main`. The CLI diffs `git diff <base>...HEAD`, loads `.reviews/`, and runs the full review.
@@ -206,6 +224,8 @@ How it resolves: the provider key is `nebius`, matching the prefix in `REVIEW_MO
 
 ## GitHub Action
 
+Since the framework is self-hosted (see [How it runs](#how-it-runs-self-hosted-model)), the workflow runs in the repo being reviewed — the `checkout` step ensures the process runs from the repo root. The workflow installs the `opencode` CLI before invoking the action because `setup-bun` does not include it.
+
 Copy `.github/workflows/layered-review.yml` into your repo:
 
 ```yaml
@@ -226,6 +246,8 @@ jobs:
           fetch-depth: 0
       - uses: oven-sh/setup-bun@v2
       - run: bun install
+      - name: Install OpenCode CLI (the SDK spawns it)
+        run: npm install -g opencode-ai  # pin a version to match @opencode-ai/sdk if needed
       - run: bun run src/entrypoints/action.ts
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

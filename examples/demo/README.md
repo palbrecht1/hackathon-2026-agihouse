@@ -39,20 +39,40 @@ After a run against the planted violations you should see:
 
 The process exits non-zero (`FAIL`) when any `error`-severity finding is present. The newest file at `.review-output/<epoch-ms>/findings.json` will contain the structured findings array.
 
-## Running the demo locally
+## What this directory is
 
-Requires `ANTHROPIC_API_KEY` and (for the SQL rule) `DEV_DATABASE_URL`.
+`examples/demo/` is an **illustrative config set** — review layers (`.reviews/`), a custom `sql_explain` tool (`.opencode/tool/sql_explain.ts`), and source files with planted violations (`src/`). It is not a standalone runnable project. The reporter tool that records findings lives at `.opencode/tool/report.ts` in the **framework root** and imports from `src/` there; it is only discoverable when the process runs from the framework repo root.
+
+## Running a review against the demo config
+
+To actually run a review that records findings, the reporter tool must be on the discovery path. That means running from the **framework repo root** (the directory that contains both `.opencode/tool/report.ts` and `src/`).
+
+**Step 1 — copy demo assets into the framework root:**
 
 ```bash
-export ANTHROPIC_API_KEY=...   # required
-cd examples/demo
-git init && git add -A && git commit -m "base"   # establish a base to diff against
-# introduce/modify the violation files, then:
-bun run ../../src/entrypoints/cli.ts main
+# From the framework root:
+cp -r examples/demo/.reviews .reviews
+cp examples/demo/.opencode/tool/sql_explain.ts .opencode/tool/sql_explain.ts
+cp -r examples/demo/src src   # the planted-violation files
 ```
 
-Expected outcome: exits non-zero (`FAIL`); inspect `.review-output/<epoch-ms>/findings.json` for the structured findings listed above.
+**Step 2 — establish a git base to diff against:**
+
+```bash
+git add -A && git commit -m "base"
+# (or use any existing commit as your base-ref)
+```
+
+**Step 3 — run from the framework root:**
+
+```bash
+export ANTHROPIC_API_KEY=...        # required
+export DEV_DATABASE_URL=...         # optional — enables the sql_explain tool
+bun run src/entrypoints/cli.ts main
+```
+
+Expected outcome: exits non-zero (`FAIL`); inspect `.review-output/<epoch-ms>/findings.json` for the structured findings listed above. Do **not** `cd examples/demo` before running — doing so will prevent OpenCode from discovering the reporter tool and the review will not function.
 
 ## GitHub Action path
 
-The same rule files are used when running via the bundled GitHub Action (`.github/workflows/review.yml`). In GitHub mode the agent posts inline comments on the pull request instead of writing local files, gated by a `layered-review` status check. Set `ANTHROPIC_API_KEY` as a repository secret and the workflow triggers automatically on every pull request.
+The same rule files work when running via the bundled GitHub Action (`.github/workflows/layered-review.yml`). In GitHub mode the agent posts inline comments on the pull request instead of writing local files, gated by a `layered-review` status check. Set `ANTHROPIC_API_KEY` as a repository secret and the workflow triggers automatically on every pull request.

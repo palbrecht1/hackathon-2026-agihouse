@@ -15,6 +15,8 @@ jobs:
           fetch-depth: 0
       - uses: oven-sh/setup-bun@v2
       - run: bun install
+      - name: Install OpenCode CLI (the SDK spawns it)
+        run: npm install -g opencode-ai  # CLI package; pin a version to match @opencode-ai/sdk if needed
       - run: bun run src/entrypoints/action.ts
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
