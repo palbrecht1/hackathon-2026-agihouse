@@ -13,3 +13,8 @@ rules:
       the diff. New fallible functions should return `Result<T, E>` from
       neverthrow (use `ok(...)` / `err(...)`) rather than throwing. Only flag
       code that is actually added/changed in this diff, not pre-existing lines.
+
+      Report AT MOST ONE finding per function/symbol: if a single function has
+      several related issues (e.g. a try/catch and the throw inside it), coalesce
+      them into ONE finding that describes the function's error-handling approach
+      and the neverthrow-based fix, anchored on the most relevant line.

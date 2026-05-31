@@ -26,6 +26,11 @@ jobs:
           NEBIUS_API_KEY: ${{ secrets.NEBIUS_API_KEY }}
           REVIEW_MODEL: nebius/moonshotai/Kimi-K2.6
           OPENCODE_PROVIDER_JSON: '{"nebius":{"npm":"@ai-sdk/openai-compatible","name":"Nebius Token Factory","options":{"baseURL":"https://api.tokenfactory.us-central1.nebius.com/v1/","apiKey":"{env:NEBIUS_API_KEY}"},"models":{"moonshotai/Kimi-K2.6":{}}}}'
+          # OpenTelemetry → W&B Weave (traces of every agent run). Set WANDB_API_KEY secret.
+          OPENCODE_ENABLE_TELEMETRY: "1"
+          OPENCODE_OTLP_PROTOCOL: http/protobuf
+          OPENCODE_OTLP_ENDPOINT: https://trace.wandb.ai/otel
+          OPENCODE_OTLP_HEADERS: wandb-api-key=${{ secrets.WANDB_API_KEY }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}

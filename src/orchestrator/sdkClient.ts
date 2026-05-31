@@ -9,6 +9,66 @@ export interface SdkHandle {
   close: () => Promise<void>
 }
 
+/** OpenCode plugin that exports OTEL traces/metrics (e.g. to W&B Weave). */
+const OTEL_PLUGIN = "@devtheops/opencode-plugin-otel"
+
+/**
+ * Turn an OpenCode event into a one-line activity log, or null to skip.
+ * The orchestrator's work surfaces as `message.part.updated` events whose part
+ * is a `subtask` (a dispatched rule-reviewer) or a `tool` call (e.g. the task or
+ * report tool). This gives realtime visibility into what the agents are doing.
+ */
+function describeEvent(ev: { type: string; properties?: Record<string, unknown> }): string | null {
+  if (ev.type === "session.error") {
+    return `⚠️  session error: ${JSON.stringify(ev.properties?.error ?? ev.properties)}`
+  }
+  if (ev.type !== "message.part.updated") return null
+  const part = (ev.properties?.part ?? {}) as Record<string, unknown>
+  if (part.type === "subtask") {
+    return `↳ dispatched subagent [${String(part.agent)}]: ${String(part.description)}`
+  }
+  if (part.type === "tool") {
+    const status = String((part.state as { status?: string } | undefined)?.status ?? "")
+    if (status === "running" || status === "completed" || status === "error") {
+      return `  🔧 ${String(part.tool)} (${status})`
+    }
+  }
+  return null
+}
+
+/** A stable per-event key so each subtask/tool transition logs at most once. */
+function eventKey(ev: { type: string; properties?: Record<string, unknown> }): string {
+  const part = (ev.properties?.part ?? {}) as Record<string, unknown>
+  const status = (part.state as { status?: string } | undefined)?.status ?? ""
+  return `${ev.type}:${String(part.type ?? "")}:${String(part.callID ?? part.description ?? "")}:${String(status)}`
+}
+
+/**
+ * Subscribe to the global event stream and log agent activity to stdout. Uses
+ * `.catch` rather than try/catch (the codebase's own neverthrow rule). The loop
+ * ends when the server closes the stream.
+ */
+function startEventLogger(client: { event: { subscribe: () => Promise<{ stream: AsyncIterable<unknown> }> } }): void {
+  if (process.env.REVIEW_LOG_EVENTS === "false") return
+  const seen = new Set<string>()
+  void client.event
+    .subscribe()
+    .then(async (sub) => {
+      for await (const raw of sub.stream) {
+        const ev = raw as { type: string; properties?: Record<string, unknown> }
+        const key = eventKey(ev)
+        if (seen.has(key)) continue
+        const line = describeEvent(ev)
+        if (!line) continue
+        seen.add(key)
+        console.log(`[review] ${line}`)
+      }
+    })
+    .catch(() => {
+      /* stream closed on server shutdown — nothing to do */
+    })
+}
+
 /**
  * Resolve `{env:VAR}` placeholders inside a parsed config value (the same
  * convention OpenCode uses in its on-disk config). Lets a custom provider's
@@ -48,9 +108,16 @@ export async function createSdkClient(model: string, rules: Rule[]): Promise<Sdk
   if (providerJson) {
     config.provider = resolveEnvPlaceholders(JSON.parse(providerJson) as unknown)
   }
+  // Load the OTEL exporter plugin when telemetry is enabled (it reads the
+  // OPENCODE_OTLP_* env vars itself); the plugin install is handled by OpenCode.
+  if (process.env.OPENCODE_ENABLE_TELEMETRY === "1") {
+    config.plugin = [OTEL_PLUGIN]
+  }
   const { client, server } = await createOpencode({
     config: config as unknown as Config,
   })
+
+  startEventLogger(client)
 
   return {
     client: {
