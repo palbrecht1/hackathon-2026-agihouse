@@ -45,7 +45,7 @@ Core properties:
 - **Locally:** install OpenCode normally (e.g. `npm install -g opencode-ai`).
 - **In CI:** the bundled workflow installs it automatically before running the action (`npm install -g opencode-ai`).
 
-> **Future work:** cross-repo distribution as an installable npm package or reusable GitHub Action (where consumers install the framework as a dependency without copying source) is not yet supported. Today the framework must live in the repo root it reviews.
+> **Cross-repo use:** other repos can consume this as a composite GitHub Action (`uses: palbrecht1/hackathon-2026-agihouse@v1`) — the action installs the framework into the repo under review at runtime, so no vendoring is required. See [Using it in another repository](#using-it-in-another-repository).
 
 ---
 
@@ -317,17 +317,39 @@ The `layered-review` status check fails when any confirmed `error` finding is pr
 
 ## Using it in another repository
 
-The tool is **self-hosted**: the `opencode` CLI must run from the repo root so it discovers `.opencode/tool/report.ts` and `src/` via relative paths (see [How it runs](#how-it-runs-self-hosted-model)). There is no published npm package or reusable `workflow_call` / `uses: <repo>@v1` action yet — that is the productization path for drop-in cross-repo use without vendoring.
+This repo ships a **composite GitHub Action** (`action.yml`), so another repo can use it as a drop-in step — no vendoring. The action installs the framework into the repo under review, drops a reporter tool that re-exports it, and runs the review from the repo root (so OpenCode reads *that* repo's `.reviews/` and code).
 
-**To use it in another repo today, vendor it in:**
+**In the consumer repo**, add `.reviews/*.yaml` rules, the repo secrets, and a workflow:
 
-1. Copy `src/`, `.opencode/`, and `package.json` (for dependencies) from this repo into the target repo's root.
-2. Copy `.github/workflows/layered-review.yml`.
-3. Create a root `.reviews/` directory with your rule YAML files.
-4. Add the required repo secrets (`NEBIUS_API_KEY` or `ANTHROPIC_API_KEY`; optionally `WANDB_API_KEY`) and variables (`WANDB_PROJECT_ID` if using W&B).
-5. Open a PR — the workflow triggers automatically.
+```yaml
+# .github/workflows/layered-review.yml
+name: Layered Review
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+permissions:
+  contents: read
+  pull-requests: write
+  statuses: write
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: palbrecht1/hackathon-2026-agihouse@v1
+        with:
+          nebius-api-key: ${{ secrets.NEBIUS_API_KEY }}   # or anthropic-api-key + model: anthropic/claude-sonnet-4-5
+          wandb-api-key: ${{ secrets.WANDB_API_KEY }}     # optional (W&B Weave traces)
+          wandb-project-id: my-entity/my-project          # optional
+```
 
-A reusable GitHub Action / `workflow_call` interface / published npm package is **not yet built**. The items above are the only supported path today.
+**Action inputs** (all optional; see `action.yml`): `model` (default `nebius/moonshotai/Kimi-K2.6`), `opencode-provider-json`, `nebius-api-key`, `anthropic-api-key`, `wandb-api-key`, `wandb-project-id`, `fail-open`, `github-token` (defaults to the workflow token). The consumer's own custom tools in their `.opencode/tool/` are picked up too.
+
+> Pin to a released tag (`@v1`) or a commit SHA. `@v1` resolves to a tagged release of this repo.
+
+**Alternative — vendor it in** (if you'd rather not depend on this repo): copy `src/`, `.opencode/`, `package.json`, and `.github/workflows/layered-review.yml` into the target repo, add a root `.reviews/`, set the secrets/variables, and open a PR.
 
 ---
 

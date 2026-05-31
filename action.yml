@@ -1,0 +1,66 @@
+name: "Layered PR Review"
+description: "AI PR review on OpenCode — an orchestrator dispatches one read-only rule-reviewer subagent per matched rule from .reviews/ and enforces results via a deterministic gate."
+branding:
+  icon: "check-circle"
+  color: "purple"
+
+inputs:
+  model:
+    description: "OpenCode model string (provider/model)."
+    default: "nebius/moonshotai/Kimi-K2.6"
+  opencode-provider-json:
+    description: "OpenCode custom provider block (JSON) for non-built-in providers. {env:VAR} placeholders are resolved."
+    default: '{"nebius":{"npm":"@ai-sdk/openai-compatible","name":"Nebius Token Factory","options":{"baseURL":"https://api.tokenfactory.us-central1.nebius.com/v1/","apiKey":"{env:NEBIUS_API_KEY}"},"models":{"moonshotai/Kimi-K2.6":{}}}}'
+  nebius-api-key:
+    description: "Nebius Token Factory API key (for the default Nebius/Kimi provider)."
+    default: ""
+  anthropic-api-key:
+    description: "Anthropic API key (if using an anthropic/* model instead — also set model + clear opencode-provider-json)."
+    default: ""
+  wandb-api-key:
+    description: "W&B API key — when set, exports OTEL traces of every run to W&B Weave."
+    default: ""
+  wandb-project-id:
+    description: "W&B Weave project (entity/project) for traces."
+    default: ""
+  fail-open:
+    description: "If 'true', errored/unevaluated rules do not block the gate (default fails closed)."
+    default: "false"
+  github-token:
+    description: "Token used to read the PR diff and post comments + the layered-review status."
+    default: ${{ github.token }}
+
+runs:
+  using: "composite"
+  steps:
+    - uses: oven-sh/setup-bun@v2
+    - name: Install OpenCode CLI (the SDK spawns it)
+      shell: bash
+      run: npm install -g opencode-ai
+    - name: Install the review framework + reporter tool
+      shell: bash
+      working-directory: ${{ github.workspace }}
+      run: |
+        # Install this action's framework as a package into the repo under review,
+        # then drop a reporter tool that re-exports it (its relative imports resolve
+        # inside node_modules/layered-review). The review then runs from the repo
+        # root so OpenCode reads this repo's .reviews/ and code.
+        bun add "file:${{ github.action_path }}"
+        mkdir -p .opencode/tool
+        printf 'export { default } from "layered-review/reporter-tool"\n' > .opencode/tool/report.ts
+    - name: Run layered review
+      shell: bash
+      working-directory: ${{ github.workspace }}
+      run: bun run node_modules/layered-review/src/entrypoints/action.ts
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        REVIEW_MODEL: ${{ inputs.model }}
+        OPENCODE_PROVIDER_JSON: ${{ inputs.opencode-provider-json }}
+        NEBIUS_API_KEY: ${{ inputs.nebius-api-key }}
+        ANTHROPIC_API_KEY: ${{ inputs.anthropic-api-key }}
+        WANDB_API_KEY: ${{ inputs.wandb-api-key }}
+        WANDB_PROJECT_ID: ${{ inputs.wandb-project-id }}
+        REVIEW_FAIL_OPEN: ${{ inputs.fail-open }}
+        GITHUB_REPOSITORY: ${{ github.repository }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}

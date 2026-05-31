@@ -5,6 +5,14 @@
   "bin": {
     "review": "./src/entrypoints/cli.ts"
   },
+  "files": [
+    "src",
+    ".opencode"
+  ],
+  "exports": {
+    "./reporter-tool": "./.opencode/tool/report.ts",
+    "./action": "./src/entrypoints/action.ts"
+  },
   "scripts": {
     "test": "bun test",
     "typecheck": "tsgo --noEmit"
