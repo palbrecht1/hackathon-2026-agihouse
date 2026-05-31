@@ -340,12 +340,27 @@ jobs:
           fetch-depth: 0
       - uses: palbrecht1/hackathon-2026-agihouse@v1
         with:
-          nebius-api-key: ${{ secrets.NEBIUS_API_KEY }}   # or anthropic-api-key + model: anthropic/claude-sonnet-4-5
+          # Default provider is Nebius/Kimi — just supply its key via `env`:
+          env: |
+            NEBIUS_API_KEY=${{ secrets.NEBIUS_API_KEY }}
           wandb-api-key: ${{ secrets.WANDB_API_KEY }}     # optional (W&B Weave traces)
           wandb-project-id: my-entity/my-project          # optional
 ```
 
-**Action inputs** (all optional; see `action.yml`): `model` (default `nebius/moonshotai/Kimi-K2.6`), `opencode-provider-json`, `nebius-api-key`, `anthropic-api-key`, `wandb-api-key`, `wandb-project-id`, `fail-open`, `github-token` (defaults to the workflow token). The consumer's own custom tools in their `.opencode/tool/` are picked up too.
+**Any provider** is configurable — set `model` + `opencode-provider-json` (its `{env:...}` placeholders are resolved from `env`), e.g. OpenAI:
+
+```yaml
+      - uses: palbrecht1/hackathon-2026-agihouse@v1
+        with:
+          model: openai/gpt-5.1
+          opencode-provider-json: '{"openai":{"npm":"@ai-sdk/openai","options":{"apiKey":"{env:OPENAI_API_KEY}"}}}'
+          env: |
+            OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
+```
+
+For OpenCode's built-in providers (e.g. Anthropic), set `model: anthropic/claude-sonnet-4-5`, `opencode-provider-json: ""`, and `env: ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}`.
+
+**Action inputs** (all optional; see `action.yml`): `model` (default `nebius/moonshotai/Kimi-K2.6`), `opencode-provider-json`, `env` (newline `KEY=VALUE` provider secrets), `wandb-api-key`, `wandb-project-id`, `fail-open`, `github-token` (defaults to the workflow token). The consumer's own custom tools in their `.opencode/tool/` are picked up too.
 
 > Pin to a released tag (`@v1`) or a commit SHA. `@v1` resolves to a tagged release of this repo.
 

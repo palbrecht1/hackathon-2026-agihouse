@@ -6,16 +6,21 @@ branding:
 
 inputs:
   model:
-    description: "OpenCode model string (provider/model)."
+    description: "OpenCode model string (provider/model). Defaults to Kimi K2.6 via Nebius."
     default: "nebius/moonshotai/Kimi-K2.6"
   opencode-provider-json:
-    description: "OpenCode custom provider block (JSON) for non-built-in providers. {env:VAR} placeholders are resolved."
+    description: >-
+      OpenCode provider block (JSON) for the model's provider. {env:VAR}
+      placeholders are resolved from the env (see the `env` input). Override
+      this to use any provider (OpenAI, Anthropic gateway, Bedrock, etc.).
+      Leave empty to use only OpenCode's built-in providers.
     default: '{"nebius":{"npm":"@ai-sdk/openai-compatible","name":"Nebius Token Factory","options":{"baseURL":"https://api.tokenfactory.us-central1.nebius.com/v1/","apiKey":"{env:NEBIUS_API_KEY}"},"models":{"moonshotai/Kimi-K2.6":{}}}}'
-  nebius-api-key:
-    description: "Nebius Token Factory API key (for the default Nebius/Kimi provider)."
-    default: ""
-  anthropic-api-key:
-    description: "Anthropic API key (if using an anthropic/* model instead — also set model + clear opencode-provider-json)."
+  env:
+    description: >-
+      Newline-separated KEY=VALUE pairs exported before the review runs — your
+      provider's API key(s), referenced by {env:...} in opencode-provider-json
+      (e.g. `NEBIUS_API_KEY=${{ secrets.NEBIUS_API_KEY }}`). Pass each secret
+      through here; values are not logged.
     default: ""
   wandb-api-key:
     description: "W&B API key — when set, exports OTEL traces of every run to W&B Weave."
@@ -37,6 +42,15 @@ runs:
     - name: Install OpenCode CLI (the SDK spawns it)
       shell: bash
       run: npm install -g opencode-ai
+    - name: Export provider env vars
+      shell: bash
+      run: |
+        # Each KEY=VALUE line becomes an env var for the review step. These hold
+        # the provider API key(s) referenced by {env:...} in the provider JSON.
+        printf '%s\n' "${{ inputs.env }}" | while IFS= read -r line; do
+          case "$line" in '' | '#'*) continue ;; esac
+          echo "$line" >> "$GITHUB_ENV"
+        done
     - name: Install the review framework + reporter tool
       shell: bash
       working-directory: ${{ github.workspace }}
@@ -56,8 +70,6 @@ runs:
         GITHUB_TOKEN: ${{ inputs.github-token }}
         REVIEW_MODEL: ${{ inputs.model }}
         OPENCODE_PROVIDER_JSON: ${{ inputs.opencode-provider-json }}
-        NEBIUS_API_KEY: ${{ inputs.nebius-api-key }}
-        ANTHROPIC_API_KEY: ${{ inputs.anthropic-api-key }}
         WANDB_API_KEY: ${{ inputs.wandb-api-key }}
         WANDB_PROJECT_ID: ${{ inputs.wandb-project-id }}
         REVIEW_FAIL_OPEN: ${{ inputs.fail-open }}
