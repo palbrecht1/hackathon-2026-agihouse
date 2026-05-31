@@ -2,7 +2,9 @@
   "name": "layered-review",
   "version": "0.1.0",
   "type": "module",
-  "bin": { "review": "./src/entrypoints/cli.ts" },
+  "bin": {
+    "review": "./src/entrypoints/cli.ts"
+  },
   "scripts": {
     "test": "bun test",
     "typecheck": "tsgo --noEmit"
@@ -17,6 +19,7 @@
   },
   "devDependencies": {
     "@types/picomatch": "^3.0.1",
-    "@typescript/native-preview": "latest"
+    "@typescript/native-preview": "latest",
+    "bun-types": "^1.3.14"
   }
 }
