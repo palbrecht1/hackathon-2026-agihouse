@@ -5,6 +5,7 @@ description = "Multi-agent code review swarm with parallel specialist agents, ad
 requires-python = ">=3.11"
 dependencies = [
     "anthropic>=0.52.0",
+    "openai>=1.40.0",
     "weave>=0.51.0",
     "rich>=13.0.0",
     "click>=8.0.0",

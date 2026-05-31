@@ -38,8 +38,15 @@ AGENT_PROMPTS = {
 
 MODEL = "claude-sonnet-4-20250514"
 
-# Simulate mode: use mock responses instead of calling Anthropic API
-SIMULATE = os.environ.get("REVIEW_SWARM_SIMULATE", "").lower() in ("1", "true", "yes")
+# W&B Inference model (OpenAI-compatible, uses W&B credits)
+WANDB_INFERENCE_MODEL = "meta-llama/Llama-3.3-70B-Instruct"
+WANDB_INFERENCE_BASE_URL = "https://api.inference.wandb.ai/v1"
+
+# Backend selection: "anthropic", "wandb_inference", or "simulate"
+BACKEND = os.environ.get("REVIEW_SWARM_BACKEND", "simulate").lower()
+
+# Legacy simulate mode check
+SIMULATE = BACKEND == "simulate" or os.environ.get("REVIEW_SWARM_SIMULATE", "").lower() in ("1", "true", "yes")
 
 
 def _parse_json_response(text: str) -> dict[str, Any]:
@@ -88,20 +95,33 @@ async def run_specialist_agent(
         ).model_dump()
 
     start = time.perf_counter()
-    response = await client.messages.create(
-        model=MODEL,
-        max_tokens=4096,
-        system=system_prompt,
-        messages=[
-            {
-                "role": "user",
-                "content": f"Review this code diff:\n\n```\n{diff}\n```",
-            }
-        ],
-    )
-    latency_ms = (time.perf_counter() - start) * 1000
 
-    raw_text = response.content[0].text
+    if BACKEND == "wandb_inference":
+        # OpenAI-compatible API (W&B Serverless Inference)
+        response = await client.chat.completions.create(
+            model=WANDB_INFERENCE_MODEL,
+            max_tokens=4096,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": f"Review this code diff:\n\n```\n{diff}\n```"},
+            ],
+        )
+        latency_ms = (time.perf_counter() - start) * 1000
+        raw_text = response.choices[0].message.content
+        tokens_used = (response.usage.prompt_tokens + response.usage.completion_tokens) if response.usage else 0
+    else:
+        # Anthropic native API
+        response = await client.messages.create(
+            model=MODEL,
+            max_tokens=4096,
+            system=system_prompt,
+            messages=[
+                {"role": "user", "content": f"Review this code diff:\n\n```\n{diff}\n```"},
+            ],
+        )
+        latency_ms = (time.perf_counter() - start) * 1000
+        raw_text = response.content[0].text
+        tokens_used = response.usage.input_tokens + response.usage.output_tokens
     parsed = _parse_json_response(raw_text)
 
     findings = []
@@ -122,7 +142,7 @@ async def run_specialist_agent(
         agent=cat,
         findings=findings,
         summary=parsed.get("summary", ""),
-        tokens_used=response.usage.input_tokens + response.usage.output_tokens,
+        tokens_used=tokens_used,
         latency_ms=latency_ms,
     ).model_dump()
 
@@ -220,13 +240,22 @@ Respond in JSON:
 
 If no challenges, respond: {{"challenges": []}}"""
 
-        response = await client.messages.create(
-            model=MODEL,
-            max_tokens=2048,
-            messages=[{"role": "user", "content": challenge_prompt}],
-        )
+        if BACKEND == "wandb_inference":
+            response = await client.chat.completions.create(
+                model=WANDB_INFERENCE_MODEL,
+                max_tokens=2048,
+                messages=[{"role": "user", "content": challenge_prompt}],
+            )
+            raw_text = response.choices[0].message.content
+        else:
+            response = await client.messages.create(
+                model=MODEL,
+                max_tokens=2048,
+                messages=[{"role": "user", "content": challenge_prompt}],
+            )
+            raw_text = response.content[0].text
 
-        raw = _parse_json_response(response.content[0].text)
+        raw = _parse_json_response(raw_text)
         result = []
         for c in raw.get("challenges", []):
             try:
@@ -284,19 +313,28 @@ If no challenges, respond: {{"challenges": []}}"""
         for f in r["findings"]:
             debate_context["all_findings"].append(f)
 
-    response = await client.messages.create(
-        model=MODEL,
-        max_tokens=2048,
-        system=get_debate_prompt(),
-        messages=[
-            {
-                "role": "user",
-                "content": f"Here are the challenges and findings to adjudicate:\n\n{json.dumps(debate_context, indent=2)}",
-            }
-        ],
-    )
+    debate_user_msg = f"Here are the challenges and findings to adjudicate:\n\n{json.dumps(debate_context, indent=2)}"
 
-    verdicts_raw = _parse_json_response(response.content[0].text)
+    if BACKEND == "wandb_inference":
+        response = await client.chat.completions.create(
+            model=WANDB_INFERENCE_MODEL,
+            max_tokens=2048,
+            messages=[
+                {"role": "system", "content": get_debate_prompt()},
+                {"role": "user", "content": debate_user_msg},
+            ],
+        )
+        verdicts_text = response.choices[0].message.content
+    else:
+        response = await client.messages.create(
+            model=MODEL,
+            max_tokens=2048,
+            system=get_debate_prompt(),
+            messages=[{"role": "user", "content": debate_user_msg}],
+        )
+        verdicts_text = response.content[0].text
+
+    verdicts_raw = _parse_json_response(verdicts_text)
     dismissed_titles = set()
     for v in verdicts_raw.get("verdicts", []):
         if v.get("verdict") == "dismissed":
@@ -388,15 +426,31 @@ Original code diff:
 Consolidate these into a final prioritized review."""
 
     start = time.perf_counter()
-    response = await client.messages.create(
-        model=MODEL,
-        max_tokens=4096,
-        system=get_lead_prompt(),
-        messages=[{"role": "user", "content": context}],
-    )
-    latency_ms = (time.perf_counter() - start) * 1000
 
-    raw = _parse_json_response(response.content[0].text)
+    if BACKEND == "wandb_inference":
+        response = await client.chat.completions.create(
+            model=WANDB_INFERENCE_MODEL,
+            max_tokens=4096,
+            messages=[
+                {"role": "system", "content": get_lead_prompt()},
+                {"role": "user", "content": context},
+            ],
+        )
+        latency_ms = (time.perf_counter() - start) * 1000
+        raw_text = response.choices[0].message.content
+        lead_tokens = (response.usage.prompt_tokens + response.usage.completion_tokens) if response.usage else 0
+    else:
+        response = await client.messages.create(
+            model=MODEL,
+            max_tokens=4096,
+            system=get_lead_prompt(),
+            messages=[{"role": "user", "content": context}],
+        )
+        latency_ms = (time.perf_counter() - start) * 1000
+        raw_text = response.content[0].text
+        lead_tokens = response.usage.input_tokens + response.usage.output_tokens
+
+    raw = _parse_json_response(raw_text)
 
     findings = []
     for f in raw.get("findings", []):
@@ -413,7 +467,7 @@ Consolidate these into a final prioritized review."""
         )
 
     total_tokens = sum(r.get("tokens_used", 0) for r in agent_reviews)
-    total_tokens += response.usage.input_tokens + response.usage.output_tokens
+    total_tokens += lead_tokens
     total_latency = sum(r.get("latency_ms", 0) for r in agent_reviews) + latency_ms
 
     return FinalReview(
@@ -436,9 +490,20 @@ async def review_diff(diff: str, project: str | None = None) -> dict[str, Any]:
     1. Parallel specialist agents (Security, Performance, Logic, Style)
     2. Adversarial debate round (agents challenge each other)
     3. Lead consolidation (final ranked review)
+
+    Backends:
+    - simulate: Mock responses (no API key needed)
+    - anthropic: Real Claude API calls
+    - wandb_inference: W&B Serverless Inference (uses W&B credits, OpenAI-compatible)
     """
     if SIMULATE:
         client = None  # No API client needed in simulate mode
+    elif BACKEND == "wandb_inference":
+        from openai import AsyncOpenAI
+        client = AsyncOpenAI(
+            base_url=WANDB_INFERENCE_BASE_URL,
+            api_key=os.environ.get("WANDB_API_KEY", ""),
+        )
     else:
         import anthropic
         client = anthropic.AsyncAnthropic()
@@ -459,7 +524,48 @@ async def review_diff(diff: str, project: str | None = None) -> dict[str, Any]:
     # Log summary metrics for Weave dashboard
     await log_review_metrics(final)
 
+    # Score the review quality (for Weave Monitors)
+    await score_review_quality(final)
+
     return final
+
+
+@weave.op(call_display_name="🎯 Quality Scorer")
+async def score_review_quality(review: dict[str, Any]) -> dict[str, Any]:
+    """Score review quality inline — powers Weave Monitors for continuous eval."""
+    findings = review.get("findings", [])
+    debate = review.get("debate", {})
+
+    # Compute quality signals
+    has_critical = any(
+        (f.get("severity") if isinstance(f, dict) else f.severity.value) == "critical"
+        for f in findings
+    )
+    avg_confidence = (
+        sum(
+            (f.get("confidence", 0.8) if isinstance(f, dict) else f.confidence)
+            for f in findings
+        )
+        / max(len(findings), 1)
+    )
+    debate_participation = len(debate.get("challenges", [])) > 0
+    false_positives_caught = len(debate.get("findings_dismissed", []))
+
+    return {
+        "has_critical_findings": has_critical,
+        "average_confidence": round(avg_confidence, 3),
+        "debate_was_meaningful": debate_participation,
+        "false_positives_caught": false_positives_caught,
+        "finding_count": len(findings),
+        "risk_score": review.get("risk_score", 0),
+        "quality_score": round(
+            (avg_confidence * 0.4)
+            + (0.3 if debate_participation else 0.0)
+            + (0.2 if has_critical else 0.1)
+            + (0.1 * min(false_positives_caught / 3, 1.0)),
+            3,
+        ),
+    }
 
 
 @weave.op(call_display_name="📈 Review Metrics")
