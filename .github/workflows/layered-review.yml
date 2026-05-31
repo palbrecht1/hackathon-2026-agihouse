@@ -1,7 +1,8 @@
 name: Layered Review
 on:
   pull_request:
-    types: [opened, synchronize, reopened]
+    # synchronize = new commits; edited = PR title/base/body changed; reopened.
+    types: [opened, synchronize, reopened, edited]
 permissions:
   contents: read
   pull-requests: write
@@ -9,6 +10,9 @@ permissions:
 jobs:
   review:
     runs-on: ubuntu-latest
+    # Re-review on title/body 'edited' events by default. Set the repo variable
+    # REVIEW_ON_EDIT=false to skip re-reviews on edits (other events still run).
+    if: ${{ github.event.action != 'edited' || vars.REVIEW_ON_EDIT != 'false' }}
     steps:
       - uses: actions/checkout@v4
         with:

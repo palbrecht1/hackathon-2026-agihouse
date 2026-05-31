@@ -12,9 +12,11 @@ A reusable, config-driven AI PR review agent built on [OpenCode](https://opencod
 4. [Custom reviewer tools](#custom-reviewer-tools)
 5. [Local usage](#local-usage)
 6. [Model and provider config](#model-and-provider-config)
-7. [GitHub Action](#github-action)
-8. [Architecture](#architecture)
-9. [Dev](#dev)
+7. [Observability / Tracing](#observability--tracing)
+8. [GitHub Action](#github-action)
+9. [Using it in another repository](#using-it-in-another-repository)
+10. [Architecture](#architecture)
+11. [Dev](#dev)
 
 ---
 
@@ -192,6 +194,8 @@ Sort descending by directory name to get the latest run. `.review-output/` is gi
 
 **Fail-open mode:** set `REVIEW_FAIL_OPEN=true` to treat errored or unevaluated rules as non-blocking (still reported).
 
+**Realtime logs:** the CLI (and Action) streams agent activity to stdout as it runs. Each tool call appears as `[review] 🔧 <tool> (running/completed)` and each dispatched rule-reviewer as `[review] ↳ dispatched subagent [...]`. Set `REVIEW_LOG_EVENTS=false` to silence.
+
 **Local iteration workflow:** after a run, a local AI agent can read the newest `findings.json`, apply fixes, and re-run the CLI to iterate until the gate passes.
 
 ---
@@ -222,6 +226,26 @@ How it resolves: the provider key is `nebius`, matching the prefix in `REVIEW_MO
 
 ---
 
+## Observability / Tracing
+
+The framework can export OpenTelemetry traces of every agent run to [W&B Weave](https://weave-docs.wandb.ai/) for realtime inspection of span trees, latency, and token usage.
+
+**Setup:** set the repo secret `WANDB_API_KEY` and the env var / repo variable `WANDB_PROJECT_ID` to your W&B entity/project string (e.g. `my-entity/code-review-swarm`). When `WANDB_API_KEY` is present, the framework automatically:
+
+1. Sets `OPENCODE_ENABLE_TELEMETRY=1` so OpenCode loads the `@devtheops/opencode-plugin-otel` plugin.
+2. Starts a local JSON→protobuf bridge (`src/orchestrator/wandbBridge.ts`) and points the plugin's OTLP endpoint at it.
+3. After the review finishes, waits 3 seconds for the `BatchSpanProcessor` to flush before shutting down the OpenCode server.
+
+**Why a bridge?** W&B Weave's OTLP endpoint only accepts `application/x-protobuf`, but the OpenCode OTEL plugin (`@devtheops/opencode-plugin-otel`) emits OTLP/JSON. The bridge is a tiny local HTTP server that receives the plugin's OTLP/JSON spans, re-encodes them to protobuf, and forwards to `https://trace.wandb.ai/otel/v1/traces` with HTTP Basic auth (`api:<key>`) and a `project_id` header. Logs and metrics signals are accepted and dropped (W&B Weave is trace-focused).
+
+**Key sanitization:** `WANDB_API_KEY` is stripped of surrounding whitespace and a trailing `;` (a common copy-paste artifact that silently breaks auth).
+
+**Using a different OTLP backend:** leave `WANDB_API_KEY` unset and set `OPENCODE_OTLP_*` yourself. The plugin emits OTLP/JSON, so the backend must accept OTLP/JSON or gRPC (not raw protobuf over HTTP).
+
+The bundled `.github/workflows/layered-review.yml` already wires `WANDB_API_KEY` and `WANDB_PROJECT_ID` from repo secrets/variables.
+
+---
+
 ## GitHub Action
 
 Since the framework is self-hosted (see [How it runs](#how-it-runs-self-hosted-model)), the workflow runs in the repo being reviewed — the `checkout` step ensures the process runs from the repo root. The workflow installs the `opencode` CLI before invoking the action because `setup-bun` does not include it.
@@ -232,7 +256,7 @@ Copy `.github/workflows/layered-review.yml` into your repo:
 name: Layered Review
 on:
   pull_request:
-    types: [opened, synchronize, reopened]
+    types: [opened, synchronize, reopened, edited]
 permissions:
   contents: read
   pull-requests: write
@@ -240,6 +264,7 @@ permissions:
 jobs:
   review:
     runs-on: ubuntu-latest
+    if: ${{ github.event.action != 'edited' || vars.REVIEW_ON_EDIT != 'false' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -257,24 +282,52 @@ jobs:
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
 ```
 
+**Trigger behavior:**
+
+| Event type | When it fires | Notes |
+|------------|--------------|-------|
+| `opened` | PR first opened | — |
+| `synchronize` | New commits pushed to the PR | Re-reviews automatically |
+| `reopened` | Closed PR re-opened | — |
+| `edited` | PR title, body, or base branch changed | On by default; set repo **variable** `REVIEW_ON_EDIT=false` (Settings → Variables, not Secrets) to skip re-reviews on edits — other event types still run |
+
+Comment dedup means re-reviews update or skip rather than duplicate: each posted finding carries a hidden `<!-- review-agent:{ruleId}:{fingerprint} -->` marker keyed on `ruleId:file:line`.
+
 **Required secrets:**
 
 | Secret | Purpose |
 |--------|---------|
 | `ANTHROPIC_API_KEY` | Model auth for the default Anthropic provider |
 | `GITHUB_TOKEN` | Built-in Actions token — no setup needed |
+| `WANDB_API_KEY` | Optional — enables W&B Weave trace export (see [Observability / Tracing](#observability--tracing)) |
 
-For a custom provider, add the provider's API key as a secret and set `OPENCODE_PROVIDER_JSON` and `REVIEW_MODEL` in the `env` block.
+For a custom provider, add the provider's API key as a secret and set `OPENCODE_PROVIDER_JSON` and `REVIEW_MODEL` in the `env` block. The bundled workflow uses Kimi K2.6 via Nebius Token Factory — see `.github/workflows/layered-review.yml` for the full example.
 
 **What the Action does:**
 
 - Reads the PR diff via the GitHub API (octokit).
 - Runs the full review against `.reviews/` config.
-- Posts inline comments on the PR for each finding (deduped via a hidden `<!-- review-agent:{ruleId}:{fingerprint} -->` marker so re-runs on the same commit don't duplicate comments).
+- Posts inline comments on the PR for each finding (deduped via the hidden marker so re-runs on the same commit don't duplicate comments).
 - Posts a summary comment.
 - Sets a `layered-review` commit status (`success` / `failure`) that can be configured as a required check to block merging.
 
 The `layered-review` status check fails when any confirmed `error` finding is present, or when a dispatched rule has no result in fail-closed mode.
+
+---
+
+## Using it in another repository
+
+The tool is **self-hosted**: the `opencode` CLI must run from the repo root so it discovers `.opencode/tool/report.ts` and `src/` via relative paths (see [How it runs](#how-it-runs-self-hosted-model)). There is no published npm package or reusable `workflow_call` / `uses: <repo>@v1` action yet — that is the productization path for drop-in cross-repo use without vendoring.
+
+**To use it in another repo today, vendor it in:**
+
+1. Copy `src/`, `.opencode/`, and `package.json` (for dependencies) from this repo into the target repo's root.
+2. Copy `.github/workflows/layered-review.yml`.
+3. Create a root `.reviews/` directory with your rule YAML files.
+4. Add the required repo secrets (`NEBIUS_API_KEY` or `ANTHROPIC_API_KEY`; optionally `WANDB_API_KEY`) and variables (`WANDB_PROJECT_ID` if using W&B).
+5. Open a PR — the workflow triggers automatically.
+
+A reusable GitHub Action / `workflow_call` interface / published npm package is **not yet built**. The items above are the only supported path today.
 
 ---
 
