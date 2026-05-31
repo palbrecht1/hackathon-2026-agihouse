@@ -67,7 +67,7 @@ export async function createSdkClient(model: string, rules: Rule[]): Promise<Sdk
           body: { agent, parts: [{ type: "text", text }] },
         })
         if (!result.data) {
-          throw new Error(`Prompt failed for session ${sessionId}: ${String(result.error)}`)
+          throw new Error(`Prompt failed for session ${sessionId}: ${JSON.stringify(result.error)}`)
         }
         // Extract concatenated text from all text-type parts in the response
         const textContent = result.data.parts

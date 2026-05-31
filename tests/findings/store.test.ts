@@ -23,3 +23,11 @@ test("appends and reads results round-trip", () => {
 test("readResults on missing file returns empty", () => {
   expect(readResults(path())).toEqual([])
 })
+
+test("appendResult creates the parent directory if it does not exist", () => {
+  // The reporter tool is the first writer and the .review-output dir may not exist yet.
+  const dir = mkdtempSync(join(tmpdir(), "store-"))
+  const p = join(dir, "nested", "deeper", "results.jsonl")
+  appendResult(p, { ruleId: "a", status: "clean", findings: [] })
+  expect(readResults(p).map((r) => r.ruleId)).toEqual(["a"])
+})
