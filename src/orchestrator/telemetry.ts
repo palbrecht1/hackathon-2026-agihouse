@@ -1,26 +1,26 @@
+import { startWandbBridge, type WandbBridge } from "./wandbBridge"
+
 /**
  * W&B Weave OpenTelemetry wiring.
  *
- * When `WANDB_API_KEY` is set, derive the OpenCode OTEL env vars the
- * `@devtheops/opencode-plugin-otel` plugin reads, targeting W&B Weave. W&B
- * requires HTTP Basic auth (`base64("api:" + key)`) plus a `project_id` header
- * (`<entity>/<project>`) — a plain `wandb-api-key` header does NOT route traces.
+ * W&B's OTLP endpoint only accepts protobuf, but the OpenCode OTEL plugin emits
+ * OTLP/JSON. So when `WANDB_API_KEY` is set we start a local JSON→protobuf bridge
+ * ([[wandbBridge]]) and point the plugin's OTLP env at it; the bridge forwards
+ * to W&B with Basic auth + `project_id`.
  *
- * Other OTLP backends: leave `WANDB_API_KEY` unset and set the `OPENCODE_OTLP_*`
- * vars yourself; this function then does nothing.
+ * Returns the bridge (so the caller can close it after the export flushes), or
+ * undefined when telemetry is not configured. The key is sanitized of stray
+ * whitespace / a trailing ';' (a common copy-paste artifact that silently breaks
+ * auth). Other OTLP backends: leave WANDB_API_KEY unset and set OPENCODE_OTLP_*
+ * yourself.
  */
-export function configureWandbOtel(): void {
-  const key = process.env.WANDB_API_KEY
-  if (!key) return
+export function startWandbTelemetry(): WandbBridge | undefined {
+  const key = (process.env.WANDB_API_KEY ?? "").trim().replace(/;+$/, "")
+  if (!key) return undefined
 
-  const auth = Buffer.from(`api:${key}`).toString("base64")
-  const headers = [`Authorization=Basic ${auth}`]
-  const project = process.env.WANDB_PROJECT_ID
-  if (project) headers.push(`project_id=${project}`)
-
+  const bridge = startWandbBridge({ apiKey: key, projectId: process.env.WANDB_PROJECT_ID })
   process.env.OPENCODE_ENABLE_TELEMETRY = "1"
   process.env.OPENCODE_OTLP_PROTOCOL = "http/protobuf"
-  // Base URL; the plugin appends /v1/traces for http/protobuf.
-  process.env.OPENCODE_OTLP_ENDPOINT = "https://trace.wandb.ai/otel"
-  process.env.OPENCODE_OTLP_HEADERS = headers.join(",")
+  process.env.OPENCODE_OTLP_ENDPOINT = bridge.endpoint
+  return bridge
 }

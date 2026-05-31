@@ -15,7 +15,10 @@ export interface ReviewClient {
 }
 
 export function fingerprint(f: Finding): string {
-  return createHash("sha1").update(`${f.file}:${f.line}:${f.explanation}`).digest("hex").slice(0, 12)
+  // Key on STABLE attributes only (rule + location). The explanation wording is
+  // LLM-generated and varies between runs, so including it would defeat dedup —
+  // a re-run would post a near-identical comment with a different marker.
+  return createHash("sha1").update(`${f.ruleId}:${f.file}:${f.line}`).digest("hex").slice(0, 12)
 }
 
 function marker(f: Finding): string {

@@ -31,3 +31,17 @@ test("skips a finding whose marker already exists (dedup)", async () => {
   await postGithubResult(client, ctx, result)
   expect(posted).toHaveLength(0)
 })
+
+test("fingerprint is stable across explanation wording (re-run dedup)", async () => {
+  // Same rule + file + line, but the explanation is reworded (as the LLM would
+  // on a re-run). The marker must match so the comment is NOT posted twice.
+  const reworded: RuleResult = {
+    ...result,
+    findings: [{ ...result.findings[0]!, explanation: "totally different wording this run" }],
+  }
+  expect(fingerprint(reworded.findings[0]!)).toBe(fingerprint(result.findings[0]!))
+  const fp = fingerprint(result.findings[0]!)
+  const { client, posted } = fakeClient([`prev <!-- review-agent:no-db:${fp} -->`])
+  await postGithubResult(client, ctx, reworded)
+  expect(posted).toHaveLength(0)
+})
