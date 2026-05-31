@@ -14,6 +14,14 @@ export interface SdkHandle {
 const OTEL_PLUGIN = "@devtheops/opencode-plugin-otel"
 
 /**
+ * After the review finishes we must keep the (spawned) OpenCode server alive
+ * briefly so the OTEL BatchSpanProcessor flushes queued spans before we close
+ * it — otherwise a short-lived run exports nothing. Paired with a short batch
+ * schedule delay below.
+ */
+const TELEMETRY_FLUSH_GRACE_MS = 3000
+
+/**
  * Turn an OpenCode event into a one-line activity log, or null to skip.
  * The orchestrator's work surfaces as `message.part.updated` events whose part
  * is a `subtask` (a dispatched rule-reviewer) or a `tool` call (e.g. the task or
@@ -107,6 +115,12 @@ export async function createSdkClient(model: string, rules: Rule[]): Promise<Sdk
   // Derive W&B Weave OTEL env from WANDB_API_KEY/WANDB_PROJECT_ID (no-op otherwise).
   configureWandbOtel()
 
+  const telemetryEnabled = process.env.OPENCODE_ENABLE_TELEMETRY === "1"
+  if (telemetryEnabled && !process.env.OTEL_BSP_SCHEDULE_DELAY) {
+    // Export spans ~every 500ms so they flush within the close() grace window.
+    process.env.OTEL_BSP_SCHEDULE_DELAY = "500"
+  }
+
   const config: Record<string, unknown> = { ...buildAgentConfig(model, rules) }
   const providerJson = process.env.OPENCODE_PROVIDER_JSON
   if (providerJson) {
@@ -148,8 +162,13 @@ export async function createSdkClient(model: string, rules: Rule[]): Promise<Sdk
         return { text: textContent || JSON.stringify(result.data.info) }
       },
     },
-    // server.close() is synchronous in SDK 1.15.13; wrap to satisfy Promise<void>
+    // server.close() is synchronous in SDK 1.15.13; wrap to satisfy Promise<void>.
+    // When telemetry is on, wait for the span exporter to flush before killing
+    // the server — otherwise short-lived runs export nothing.
     close: async () => {
+      if (telemetryEnabled) {
+        await new Promise((resolve) => setTimeout(resolve, TELEMETRY_FLUSH_GRACE_MS))
+      }
       server.close()
     },
   }
