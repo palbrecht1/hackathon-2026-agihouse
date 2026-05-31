@@ -6,12 +6,13 @@ import { loadRules } from "../config/loader"
 import { LocalGitSource } from "../source/localGit"
 import { readResults } from "../findings/store"
 import { writeLocalOutput } from "../report/local"
+import { DEFAULT_MODEL, REVIEW_OUTPUT_DIR, readFailOpen } from "./shared"
 
 async function main() {
   const base = process.argv[2] ?? "main"
-  const model = process.env.REVIEW_MODEL ?? "anthropic/claude-sonnet-4-5"
+  const model = process.env.REVIEW_MODEL ?? DEFAULT_MODEL
   const epochMs = Date.now()
-  const storePath = join(".review-output", `.store-${epochMs}.jsonl`)
+  const storePath = join(REVIEW_OUTPUT_DIR, `.store-${epochMs}.jsonl`)
 
   process.env.REVIEW_MODE = "local"
   process.env.REVIEW_STORE_PATH = storePath
@@ -24,9 +25,9 @@ async function main() {
       source: new LocalGitSource(base),
       client: sdk.client,
       storePath,
-      failOpen: process.env.REVIEW_FAIL_OPEN === "true",
+      failOpen: readFailOpen(),
     })
-    const dir = writeLocalOutput(readResults(storePath), ".review-output", epochMs)
+    const dir = writeLocalOutput(readResults(storePath), REVIEW_OUTPUT_DIR, epochMs)
     console.log(`Review written to ${dir} — ${gate.passed ? "PASS" : "FAIL"}`)
     process.exit(gate.passed ? 0 : 1)
   } finally {

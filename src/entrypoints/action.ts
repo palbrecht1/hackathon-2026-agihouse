@@ -5,13 +5,16 @@ import { createSdkClient } from "../orchestrator/sdkClient"
 import { loadRules } from "../config/loader"
 import { GitHubPRSource } from "../source/githubPr"
 import type { GithubCtx } from "../report/github"
+import { renderSummaryMarkdown } from "../report/summary"
+import { readResults } from "../findings/store"
+import { DEFAULT_MODEL, readFailOpen } from "./shared"
 
 async function main() {
   const [owner, repo] = (process.env.GITHUB_REPOSITORY ?? "/").split("/")
   const pull_number = Number(process.env.PR_NUMBER)
   const commit_id = process.env.PR_HEAD_SHA!
   const ctx: GithubCtx = { owner: owner!, repo: repo!, pull_number, commit_id }
-  const model = process.env.REVIEW_MODEL ?? "anthropic/claude-sonnet-4-5"
+  const model = process.env.REVIEW_MODEL ?? DEFAULT_MODEL
   const storePath = join(process.env.RUNNER_TEMP ?? ".", `review-store-${pull_number}.jsonl`)
 
   // Reporter tool reads these.
@@ -31,15 +34,48 @@ async function main() {
       source: new GitHubPRSource(octokit, ctx),
       client: sdk.client,
       storePath,
-      failOpen: process.env.REVIEW_FAIL_OPEN === "true",
+      failOpen: readFailOpen(),
     })
+
+    // Post or update the PR summary comment (deduplicated via hidden marker).
+    const SUMMARY_MARKER = "<!-- layered-review-summary -->"
+    const summaryBody = `${renderSummaryMarkdown(readResults(storePath))}\n\n${SUMMARY_MARKER}`
+    const priorComments = await octokit.paginate(octokit.issues.listComments, {
+      owner: owner!,
+      repo: repo!,
+      issue_number: pull_number,
+      per_page: 100,
+    })
+    const prior = priorComments.find(
+      (c: { id: number; body?: string }) => c.body?.includes(SUMMARY_MARKER),
+    )
+    if (prior) {
+      await octokit.issues.updateComment({
+        owner: owner!,
+        repo: repo!,
+        comment_id: prior.id,
+        body: summaryBody,
+      })
+    } else {
+      await octokit.issues.createComment({
+        owner: owner!,
+        repo: repo!,
+        issue_number: pull_number,
+        body: summaryBody,
+      })
+    }
+
     await octokit.repos.createCommitStatus({
       owner: owner!,
       repo: repo!,
       sha: commit_id,
       state: gate.passed ? "success" : "failure",
       context: "layered-review",
-      description: gate.passed ? "No blocking violations" : `${gate.errorFindings} error(s)`,
+      description: gate.passed
+        ? "No blocking violations"
+        : gate.errorFindings > 0
+          ? `${gate.errorFindings} blocking error finding(s)`
+          : `${gate.erroredRuleIds.length + gate.unevaluatedRuleIds.length} rule(s) could not be evaluated`,
     })
     process.exit(gate.passed ? 0 : 1)
   } finally {
