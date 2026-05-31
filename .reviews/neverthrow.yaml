@@ -1,0 +1,15 @@
+layer: Error handling
+description: |
+  This codebase is migrating to neverthrow for error handling. New fallible
+  code should return a Result<T, E> instead of throwing or using try/catch.
+  Existing throws in the codebase are legacy — do NOT treat them as precedent
+  when judging newly added or modified code.
+rules:
+  - id: no-try-catch
+    glob: "src/**/*.ts"
+    severity: error
+    rule: |
+      Flag NEW try/catch blocks and NEW thrown exceptions (`throw ...`) added in
+      the diff. New fallible functions should return `Result<T, E>` from
+      neverthrow (use `ok(...)` / `err(...)`) rather than throwing. Only flag
+      code that is actually added/changed in this diff, not pre-existing lines.
