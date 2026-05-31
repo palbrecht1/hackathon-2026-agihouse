@@ -1,0 +1,25 @@
+{
+  "name": "layered-review",
+  "version": "0.1.0",
+  "type": "module",
+  "bin": {
+    "review": "./src/entrypoints/cli.ts"
+  },
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "tsgo --noEmit"
+  },
+  "dependencies": {
+    "@octokit/rest": "^21.0.0",
+    "@opencode-ai/plugin": "^1.15.13",
+    "@opencode-ai/sdk": "^1.15.13",
+    "picomatch": "^4.0.2",
+    "yaml": "^2.5.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/picomatch": "^3.0.1",
+    "@typescript/native-preview": "latest",
+    "bun-types": "^1.3.14"
+  }
+}
