@@ -1,10 +1,15 @@
-import { readdirSync, readFileSync } from "node:fs"
+import { existsSync, readdirSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 import { parse as parseYaml } from "yaml"
 import { LayerFileSchema, type Rule } from "./schema"
 
-/** Discover `.reviews/*.yaml`, validate, and flatten into a deduped Rule[]. */
+/**
+ * Discover `.reviews/*.yaml`, validate, and flatten into a deduped Rule[].
+ * A missing `.reviews/` directory means the repo has opted out of layered review:
+ * return no rules (a no-op pass), rather than crashing.
+ */
 export function loadRules(reviewsDir: string): Rule[] {
+  if (!existsSync(reviewsDir)) return []
   const files = readdirSync(reviewsDir)
     .filter((f) => f.endsWith(".yaml") || f.endsWith(".yml"))
     .sort()

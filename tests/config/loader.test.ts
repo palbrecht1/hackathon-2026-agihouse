@@ -50,3 +50,8 @@ test("rules with no tools get an empty tools array", () => {
   })
   expect(loadRules(dir)[0]!.tools).toEqual([])
 })
+
+test("returns empty when the .reviews directory does not exist (no-op pass)", () => {
+  const missing = join(mkdtempSync(join(tmpdir(), "no-reviews-")), ".reviews")
+  expect(loadRules(missing)).toEqual([])
+})

@@ -20,7 +20,12 @@ jobs:
       - run: bun run src/entrypoints/action.ts
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Model: Kimi K2.6 via Nebius Token Factory. Set the NEBIUS_API_KEY repo secret.
+          # (To use Anthropic instead, drop the provider vars and set ANTHROPIC_API_KEY +
+          #  REVIEW_MODEL=anthropic/claude-sonnet-4-5.)
+          NEBIUS_API_KEY: ${{ secrets.NEBIUS_API_KEY }}
+          REVIEW_MODEL: nebius/moonshotai/Kimi-K2.6
+          OPENCODE_PROVIDER_JSON: '{"nebius":{"npm":"@ai-sdk/openai-compatible","name":"Nebius Token Factory","options":{"baseURL":"https://api.tokenfactory.us-central1.nebius.com/v1/","apiKey":"{env:NEBIUS_API_KEY}"},"models":{"moonshotai/Kimi-K2.6":{}}}}'
           GITHUB_REPOSITORY: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
